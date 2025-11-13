@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tutor-virtual"
+version = "0.1.0"
+description = "Tutor Virtual de Dimensionamiento y Selección de Componentes"
+requires-python = ">=3.11"
+dependencies = ["textual>=0.48.0"]

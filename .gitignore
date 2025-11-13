@@ -1,0 +1,13 @@
+# Omit design documents and specifications
+*.docx
+*.doc
+*.pdf
+*.xlsx
+*.csv
+*.txt
+
+# Omit compiled Python files
+__pycache__/
+
+# Omit IDE specific files
+.vscode/
