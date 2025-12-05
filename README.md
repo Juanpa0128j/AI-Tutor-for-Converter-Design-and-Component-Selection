@@ -234,23 +234,6 @@ mypy tutor_virtual/
 | AI/Chat Integration | 🚧 | 0% |
 | Documentation | 🚧 | 60% |
 
-### Commits Recientes
-- ✅ Implementación de 13 diseñadores de topologías
-- ✅ Motor de validación con reglas IEEE/IEC
-- ✅ Interfaz TUI con Textual
-- ✅ Sistema de unidades en formularios de entrada
-- ✅ Formateo estético de resultados con conversión automática de unidades
-
-## 🐛 Problemas Conocidos
-
-- ⚠️ RuntimeWarning al ejecutar con `python -m`: usar `python run.py` en su lugar
-- ⚠️ El tamaño de texto en TUI depende del terminal (usar `Ctrl++` para agrandar)
-
-1. **Integración con catálogos de componentes** (APIs de DigiKey, Mouser)
-2. **Implementación del chatbot con LLM** (OpenAI/Anthropic)
-3. **Testing automatizado** (pytest, cobertura >80%)
-4. **Documentación de APIs** (Sphinx/MkDocs)
-
 ## 📝 Licencia
 
 TODO

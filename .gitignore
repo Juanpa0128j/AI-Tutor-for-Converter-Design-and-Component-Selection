@@ -11,3 +11,9 @@ __pycache__/
 
 # Omit IDE specific files
 .vscode/
+
+# Omit environment files
+.env
+
+# Omit examples
+/examples/
