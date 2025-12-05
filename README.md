@@ -9,9 +9,12 @@ Este proyecto implementa un tutor virtual que guía a estudiantes e ingenieros e
 - ✅ Cálculos automatizados de prediseño para 13 topologías diferentes
 - ✅ Validación de especificaciones según normas IEEE/IEC
 - ✅ Estimación de pérdidas en componentes
-- ✅ Interfaz de usuario en terminal (TUI) con Textual
-- 🚧 Recomendaciones de componentes comerciales (próximamente)
-- 🚧 Modo chatbot con IA para asistencia interactiva (próximamente)
+- ✅ Interfaz de usuario en terminal con Gradio (Textual opcional)
+- ✅ Recomendaciones de componentes comerciales
+- ✅ Modo chatbot con IA para asistencia interactiva
+- ✅ Interfaz web (Gradio) con TUI opcional (Textual)
+- ✅ Recomendaciones de componentes comerciales (integración Mouser experimental)
+- ✅ Modo chatbot con IA para asistencia interactiva (streaming de respuestas, RAG)
 
 ## 🏗️ Arquitectura
 
@@ -25,11 +28,15 @@ tutor_virtual/
 │   └── ports/           # Interfaces y contratos
 ├── application/         # Casos de uso y servicios de aplicación
 │   └── services/        # DesignWorkflowService (orquestación)
-├── infrastructure/      # Adaptadores externos (futura persistencia)
-├── presentation/        # Interfaz de usuario (Textual TUI)
-│   ├── app.py          # Aplicación principal
-│   └── spec_schema.py  # Definición de formularios por topología
-└── shared/             # DTOs y objetos compartidos
+├── infrastructure/      # Adaptadores externos y servicios
+│   ├── catalogs/        # Adaptadores de catálogos (Mouser, cache Redis)
+│   ├── rag/             # Document processing, vector store y RAG service
+│   └── ai_agent.py      # Agente LangChain y herramientas (prototipo)
+├── presentation/        # Interfaz de usuario
+│   ├── app.py           # TUI (Textual)
+│   ├── gradio_app.py    # UI web (Gradio, experimental)
+│   └── spec_schema.py   # Definición de formularios por topología
+└── shared/              # DTOs y objetos compartidos
 ```
 
 ## ✨ Funcionalidades Implementadas
@@ -80,11 +87,17 @@ tutor_virtual/
 - ✅ Atajos de teclado (Ctrl+S para calcular, Escape/Q para salir)
 - ✅ Validación en tiempo real con mensajes claros
 
+### 5. **Integraciones e Infraestructura (recientes)**
+- ✅ Integración básica con catálogos comerciales (Mouser) y servicio de recomendación de componentes (experimental)
+- ✅ RAG (ingestión y búsqueda por similaridad) para documentos y primer flujo de indexado
+- ✅ Agente AI basado en LangChain (prototipo) y conjunto de herramientas para diseño, búsqueda y simulación
+- ✅ Servicio de simulación (tiempo-dominio) para Buck/Boost y herramientas de análisis
+- ✅ Internacionalización (i18n) para UI (ES/EN) y refactor de formularios para usar claves de traducción
+- ✅ Interfaz web mínima con Gradio (experimental) — UI complementaria a la TUI
+
 ## 🚧 Próximas Funcionalidades
 
 ### Corto Plazo
-- [ ] Integración con catálogos de componentes (DigiKey, Mouser, LCSC)
-- [ ] Recomendaciones automáticas de MOSFETs, diodos, capacitores
 - [ ] Exportación de resultados (PDF, JSON, CSV)
 - [ ] Historial de diseños guardados (persistencia SQLite)
 
@@ -132,22 +145,45 @@ pip install -e .
 O instalar manualmente:
 ```bash
 pip install textual>=0.48.0
+pip install langchain langchain-google-genai langchain-pinecone pinecone unstructured-client
+```
+
+### Variables de entorno críticas
+Para habilitar las integraciones avanzadas (RAG, agente AI, embeddings y búsquedas), configure las siguientes variables de entorno en su entorno (p.ej. un `.env` local o variables del sistema):
+
+- `GOOGLE_API_KEY` : clave para Google Generative AI / embeddings.
+- `PINECONE_API_KEY` : clave para Pinecone (vector DB) si se usa RAG.
+- `UNSTRUCTURED_API_KEY` : clave para el servicio Unstructured (procesamiento de documentos).
+- `MOUSER_API_KEY` : clave de Mouser (si usa búsqueda en catálogo en producción).
+- `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` : opcional, si usa cache Redis.
 ```
 
 ### Ejecución
-
 **Opción 1: Script de entrada** (recomendado)
+**Opción recomendada: Script de entrada**
+
 ```bash
+# Ejecuta la interfaz web (Gradio) por defecto
 python run.py
+
+# Ejecuta la TUI (Textual) - modo legacy
+python run.py --tui
 ```
 
-**Opción 2: Módulo Python**
+El script `run.py` detecta `--tui` para lanzar la versión de terminal; si no se pasa, intenta crear y lanzar la app Gradio.
+
+Si necesita establecer variables de entorno en la misma línea (ejemplo mínimo):
+
 ```bash
+GOOGLE_API_KEY=... PINECONE_API_KEY=... UNSTRUCTURED_API_KEY=... python run.py
+```
+
+Alternativa (directa, útil para debugging):
+
+```bash
+# Inicia la TUI directamente (si prefieres no usar `run.py --tui`)
 python -m tutor_virtual.presentation.app
-```
-
-**Opción 3: Ejecución directa**
-```bash
+# O ejecutar el archivo directamente (menos recomendado)
 python tutor_virtual/presentation/app.py
 ```
 
@@ -193,8 +229,12 @@ python tutor_virtual/presentation/app.py
   - `design_workflow.py`: Servicio principal de prediseño
 
 - **Presentation Layer**: Interfaz Textual
-  - `app.py`: 450+ líneas, aplicación TUI completa
-  - `spec_schema.py`: Definición de formularios con unidades
+- **Presentation Layer**: Interfaz (Web + TUI)
+   - `app.py`: TUI (Textual) — wizard interactivo para diseño
+   - `gradio_app.py`: Entrada Gradio/servidor web (experimental)
+   - `gradio_adapter.py`: Lógica de adaptación entre Gradio y servicios (chat, diseño, documentos, tablas de componentes)
+   - `translations.py`: Traducciones y mapeo de idiomas (i18n)
+   - `spec_schema.py`: Definición de formularios por topología (ahora i18n-ready)
 
 ### Herramientas de Desarrollo
 
@@ -219,20 +259,21 @@ Type checking:
 mypy tutor_virtual/
 ```
 
+
 ## 📊 Estado del Proyecto
 
-### Progreso General: ~40% Completado
+### Progreso General: ~55% Completado (actualizado)
 
 | Módulo | Estado | Completado |
 |--------|--------|-----------|
 | Core Domain (Converters) | ✅ | 100% |
 | Validation Engine | ✅ | 100% |
 | Application Services | ✅ | 100% |
-| Presentation (TUI) | ✅ | 95% |
-| Persistence Layer | 🚧 | 0% |
-| Component Catalog | 🚧 | 0% |
-| AI/Chat Integration | 🚧 | 0% |
-| Documentation | 🚧 | 60% |
+| Presentation (TUI) | 🚧 | 95% |
+| Persistence Layer | 🚧 | 10% |
+| Component Catalog | 🚧 | 95% |
+| AI/Chat Integration | 🚧 | 90% |
+| Documentation | 🚧 | 65% |
 
 ## 📝 Licencia
 
@@ -247,8 +288,12 @@ TODO
 - Textual framework por la excelente librería de TUI
 - Comunidad de electrónica de potencia por las referencias técnicas
 - IEEE/IEC por los estándares de diseño
+ - Gradio por facilitar la creación rápida de interfaces web experimentales
+ - Pinecone por la solución de vector store que potencia las búsquedas por similaridad
+ - LangChain por la infraestructura de agentes y orquestación de herramientas de LLM
+ - Unstructured por las utilidades de procesamiento de documentos y extracción de texto
 
 ---
 
-**Última actualización**: Noviembre 2025  
+**Última actualización**: Diciembre 05, 2025
 **Versión**: 0.1.0-alpha
