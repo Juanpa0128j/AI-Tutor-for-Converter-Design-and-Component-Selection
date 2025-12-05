@@ -81,7 +81,8 @@ class ComponentRecommendationService:
                     all_components.extend(components)
                 except Exception as e:
                     # Log error but continue with other catalogs
-                    print(f"Error searching {catalog.get_catalog_name()}: {e}")
+                    import logging
+                    logging.getLogger(__name__).warning(f"Error searching {catalog.get_catalog_name()}: {e}")
             
             # Cache the results
             if self.cache and all_components:

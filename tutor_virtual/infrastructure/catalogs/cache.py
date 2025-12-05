@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     import redis.asyncio as redis
@@ -82,7 +85,7 @@ class RedisComponentCache(ComponentRepositoryPort):
             
         except Exception as e:
             # Log error but don't fail - cache miss is acceptable
-            print(f"Cache read error: {e}")
+            logger.error(f"Cache read error: {e}")
             return None
     
     async def cache_components(
@@ -115,7 +118,7 @@ class RedisComponentCache(ComponentRepositoryPort):
             
         except Exception as e:
             # Log error but don't fail - cache write failure is acceptable
-            print(f"Cache write error: {e}")
+            logger.error(f"Cache write error: {e}")
     
     async def invalidate_cache(self, pattern: str) -> None:
         """Invalidate cache entries matching pattern."""
@@ -132,7 +135,7 @@ class RedisComponentCache(ComponentRepositoryPort):
                 await conn.delete(*keys)
                 
         except Exception as e:
-            print(f"Cache invalidation error: {e}")
+            logger.error(f"Cache invalidation error: {e}")
     
     async def close(self) -> None:
         """Close Redis connection."""

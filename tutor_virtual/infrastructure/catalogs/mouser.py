@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import logging
 from typing import List, Optional, Dict, Any
+from dotenv import load_dotenv
 
 try:
     import httpx
@@ -49,7 +50,8 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
             raise ImportError(
                 "httpx is required for Mouser API. Install with: pip install httpx"
             )
-        
+
+        load_dotenv()
         api_key = api_key or os.getenv("MOUSER_API_KEY")
         super().__init__(
             api_key=api_key,
@@ -174,15 +176,15 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
         search_results = data.get("SearchResults", {})
         parts = search_results.get("Parts", [])
         
-        logger.info(f"🔍 Mouser API returned {len(parts)} parts")
+        logger.debug(f"🔍 Mouser API returned {len(parts)} parts")
         
         for i, part in enumerate(parts, 1):
             try:
-                logger.info(f"   Parsing part {i}/{len(parts)}...")
+                logger.debug(f"   Parsing part {i}/{len(parts)}...")
                 component = self._parse_part(part)
                 if component:
                     components.append(component)
-                    logger.info(f"   ✅ Created {type(component).__name__}: {component.part_number}")
+                    logger.debug(f"   ✅ Created {type(component).__name__}: {component.part_number}")
                 else:
                     logger.warning(f"   ⚠️  _parse_part returned None")
             except Exception as e:
@@ -233,8 +235,8 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
             manufacturer = part.get("Manufacturer", "Unknown")
             description = part.get("Description", "")
             
-            logger.info(f"      Part: {manufacturer} {part_number}")
-            logger.info(f"      Description: {description}")
+            logger.debug(f"      Part: {manufacturer} {part_number}")
+            logger.debug(f"      Description: {description}")
             
             # Pricing (get quantity 1 price)
             price_breaks = part.get("PriceBreaks", [])
@@ -255,7 +257,7 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
             category = part.get("Category", "").lower()
             
             # DEBUG: Log category to see what we're getting
-            logger.info(f"🔍 Parsing part {part_number}: category='{category}'")
+            logger.debug(f"🔍 Parsing part {part_number}: category='{category}'")
             
             # Product attributes (specifications)
             attributes = {}
@@ -264,7 +266,7 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
                 attr_value = attr.get("AttributeValue", "")
                 attributes[attr_name] = attr_value
             
-            logger.info(f"      Attributes found: {list(attributes.keys())}")
+            logger.debug(f"      Attributes found: {list(attributes.keys())}")
             
             # Determine component type and create model (support Spanish and English)
             if "mosfet" in category or "fet" in category:
@@ -305,7 +307,7 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
                 )
         
         except Exception as e:
-            print(f"Error parsing Mouser part: {e}")
+            logger.warning(f"Error parsing Mouser part: {e}")
             return None
     
     def _create_mosfet(
@@ -327,7 +329,7 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
             if id_continuous == 0.0:
                 id_continuous = id_desc
         
-        logger.info(f"         MOSFET specs: VDS={vds_max}V, ID={id_continuous}A, RDS(on)={rds_on}Ω")
+        logger.debug(f"         MOSFET specs: VDS={vds_max}V, ID={id_continuous}A, RDS(on)={rds_on}Ω")
         
         return MOSFET(
             part_number=part_number,
@@ -398,7 +400,7 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
             if voltage_rating == 0.0:
                 voltage_rating = volt_from_desc
         
-        logger.info(f"         Capacitor specs: C={capacitance*1e6:.2f}µF, V={voltage_rating}V")
+        logger.debug(f"         Capacitor specs: C={capacitance*1e6:.2f}µF, V={voltage_rating}V")
         
         return Capacitor(
             part_number=part_number,
@@ -436,7 +438,7 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
             if current_rating == 0.0:
                 current_rating = curr_from_desc
         
-        logger.info(f"         Inductor specs: L={inductance*1e6:.2f}µH, I={current_rating}A")
+        logger.debug(f"         Inductor specs: L={inductance*1e6:.2f}µH, I={current_rating}A")
         
         return Inductor(
             part_number=part_number,
@@ -663,3 +665,9 @@ class MouserAdapter(BaseCatalogAdapter, ComponentCatalogPort):
         """Close HTTP client."""
         if self._http_client:
             await self._http_client.aclose()
+            
+    async def __aenter__(self):
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()

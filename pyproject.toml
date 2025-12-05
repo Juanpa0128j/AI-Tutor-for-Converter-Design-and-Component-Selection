@@ -7,4 +7,12 @@ name = "tutor-virtual"
 version = "0.1.0"
 description = "Tutor Virtual de Dimensionamiento y Selección de Componentes"
 requires-python = ">=3.11"
-dependencies = ["textual>=0.48.0"]
+dependencies = [
+    "textual>=0.48.0",
+    "langchain>=0.1.0",
+    "langchain-google-genai>=0.0.3",
+    "python-dotenv>=1.0.0",
+    "langchain-pinecone>=0.2.0",
+    "pinecone>=3.0.0",
+    "unstructured-client>=0.18.0",
+]

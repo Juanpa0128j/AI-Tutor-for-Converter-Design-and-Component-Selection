@@ -143,7 +143,6 @@ class GradioAdapter:
                         defaults[field.key] = float(val_to_parse)
                     except ValueError:
                         pass
-            print(f"DEBUG: Defaults for {topology_id_str}: {defaults}")
             return defaults
         except ValueError:
             return {}

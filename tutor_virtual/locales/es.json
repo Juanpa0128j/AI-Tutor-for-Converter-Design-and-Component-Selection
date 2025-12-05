@@ -1,0 +1,27 @@
+{
+    "title": "⚡ Tutor IA: Diseñador de Convertidores de Potencia",
+    "tab_designer": "Diseñador",
+    "tab_tutor": "Tutor Virtual",
+    "desc_designer": "Seleccione una topología, ingrese los parámetros y obtenga un prediseño con componentes recomendados.",
+    "header_config": "### 1. Configuración",
+    "label_topology": "Topología",
+    "header_params": "### 2. Parámetros Operativos",
+    "header_weights": "### 3. Priorización de Componentes",
+    "label_cost": "Costo",
+    "label_avail": "Disponibilidad",
+    "label_eff": "Eficiencia",
+    "label_therm": "Térmica",
+    "btn_calc": "🚀 Calcular Diseño",
+    "header_report": "### 📊 Reporte de Diseño",
+    "msg_select": "Seleccione una topología y presione Calcular para ver los resultados.",
+    "header_catalog": "### 🔌 Catálogo de Componentes",
+    "header_tutor": "### 🎓 Asistente Experto en Electrónica de Potencia",
+    "desc_tutor": "Pregunte sobre conceptos, topologías o pida explicaciones paso a paso.",
+    "chat_title": "Chat con el Tutor",
+    "examples": [
+        "¿Qué es un convertidor Buck?",
+        "Explícame paso a paso cómo seleccionar el inductor.",
+        "¿Cuál es la diferencia entre Buck y Boost?",
+        "¿Por qué es importante la frecuencia de conmutación?"
+    ]
+}
