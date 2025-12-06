@@ -54,12 +54,20 @@ class RecommendationConfig:
 
 
 @dataclass
+class RAGConfig:
+    """Configuration for RAG service."""
+    
+    unstructured_timeout: int = 60
+
+
+@dataclass
 class AppConfig:
     """Application configuration."""
     
     catalog: CatalogConfig
     cache: CacheConfig
     recommendation: RecommendationConfig
+    rag: RAGConfig
     
     @classmethod
     def from_env(cls, env_file: Optional[str] = None) -> AppConfig:
@@ -91,8 +99,13 @@ class AppConfig:
             default_weight_thermal=float(os.getenv("DEFAULT_WEIGHT_THERMAL", "0.20")),
         )
         
+        rag = RAGConfig(
+            unstructured_timeout=int(os.getenv("UNSTRUCTURED_TIMEOUT", "60")),
+        )
+        
         return cls(
             catalog=catalog,
             cache=cache,
-            recommendation=recommendation
+            recommendation=recommendation,
+            rag=rag
         )

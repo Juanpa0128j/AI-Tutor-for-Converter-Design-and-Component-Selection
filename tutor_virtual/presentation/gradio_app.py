@@ -203,13 +203,21 @@ def create_app():
                 
                 with gr.Row():
                     with gr.Column(scale=1):
+                        # Strategy selector
+                        strategy_radio = gr.Radio(
+                            choices=["fast", "hi_res", "auto", "ocr_only"],
+                            value="fast",
+                            label="Strategy / Estrategia",
+                            info="fast: Text only (fastest). hi_res: OCR/Tables (slow). auto: Automatic."
+                        )
+                        
                         # File upload
                         file_upload = gr.File(
                             label=get_text("docs_upload_label", "Español"),
                             file_types=[".pdf", ".docx", ".doc", ".txt", ".md", ".rst", 
                                        ".xlsx", ".xls", ".csv", ".pptx", ".ppt", 
                                        ".html", ".htm", ".xml", ".epub", ".odt"],
-                            file_count="single"
+                            file_count="multiple"
                         )
                         upload_status = gr.Markdown("")
                     
@@ -228,6 +236,17 @@ def create_app():
                             value=[]
                         )
                         refresh_docs_btn = gr.Button(get_text("docs_refresh_btn", "Español"), size="sm")
+                        
+                        # Delete controls
+                        with gr.Row():
+                            with gr.Column(scale=3):
+                                delete_dropdown = gr.Dropdown(
+                                    label="Select Document to Delete / Seleccionar Documento a Borrar",
+                                    choices=[],
+                                    interactive=True
+                                )
+                            with gr.Column(scale=1):
+                                delete_btn = gr.Button("Delete / Borrar", variant="stop")
 
         # --- Logic ---
 
@@ -284,6 +303,8 @@ def create_app():
                     get_text("docs_col_indexed", lang_label)
                 ], value=None),  # Force refresh with new headers
                 gr.update(value=get_text("docs_refresh_btn", lang_label)),
+                gr.update(label=get_text("docs_delete_label", lang_label)),
+                gr.update(value=get_text("docs_delete_btn", lang_label)),
             ]
             
             # Update Input Widget Labels
@@ -303,7 +324,7 @@ def create_app():
             tab_tutor, tutor_header_md, tutor_intro_md, chatbot, examples_dataset,
             # Documents tab
             tab_documents, docs_header_md, docs_intro_md, file_upload, docs_list_header_md,
-            docs_list, refresh_docs_btn
+            docs_list, refresh_docs_btn, delete_dropdown, delete_btn
         ] + [input_widgets[key] for key in all_field_keys]
         
         lang_dropdown.change(
@@ -353,24 +374,40 @@ def create_app():
         )
 
         # 3. Calculation
+        # State for design context
+        design_state = gr.State(value=None)
+
         async def run_calc_wrapper(topo_id_val, wc, wa, we, wt, lang_label, *values):
             # Wrapper to handle i18n messages
             if not topo_id_val:
-                return get_text("msg_select_topo", lang_label), pd.DataFrame()
+                return get_text("msg_select_topo", lang_label), pd.DataFrame(), None
             
             inputs_dict = {k: v for k, v in zip(all_field_keys, values) if v is not None}
             weights = {"cost": wc, "availability": wa, "efficiency": we, "thermal": wt}
             
-            return await adapter.run_design(topo_id_val, inputs_dict, weights)
+            return await adapter.run_design(topo_id_val, inputs_dict, weights, lang_label)
 
         btn_calc.click(
             fn=run_calc_wrapper,
             inputs=[topology_dropdown, w_cost, w_avail, w_eff, w_therm, lang_dropdown] + input_widget_list,
-            outputs=[result_md, components_df]
+            outputs=[result_md, components_df, design_state]
         )
 
         # Session ID State
         session_id_state = gr.State(lambda: str(uuid.uuid4()))
+
+        # Listener to update tutor context
+        async def sync_design_to_tutor(design_data, session_id, lang_label):
+            if design_data and tutor_service:
+                await tutor_service.update_context(session_id, design_data)
+                gr.Info(get_text("msg_tutor_context_updated", lang_label))
+            return None
+
+        design_state.change(
+            fn=sync_design_to_tutor,
+            inputs=[design_state, session_id_state, lang_dropdown],
+            outputs=[]
+        )
 
         # 4. Chat Logic (with token streaming)
         async def respond(message, history, session_id):
@@ -406,57 +443,147 @@ def create_app():
         # Sync history state
         chatbot.change(lambda x: x, chatbot, chat_history)
 
-        # 5. Document Upload Logic
-        def get_documents_list():
-            """Get list of indexed documents for display."""
+        # 5. Document Upload & Management Logic
+        def get_documents_data():
+            """Get raw list of indexed documents."""
             try:
                 from tutor_virtual.infrastructure.rag import get_rag_service
                 rag_service = get_rag_service()
-                docs = rag_service.get_indexed_documents()
-                if not docs:
-                    return []
-                return [[d["doc_id"][:8], d["filename"], d["chunk_count"], d["indexed_at"][:19]] for d in docs]
+                return rag_service.get_indexed_documents()
             except Exception as e:
                 logger.error(f"Error getting documents list: {e}")
                 return []
-        
-        def upload_document(file, lang_label):
-            """Handle document upload and indexing."""
-            if file is None:
-                return get_text("docs_no_documents", lang_label), get_documents_list()
+
+        def refresh_all_docs_ui():
+            """Refresh both the dataframe and the delete dropdown."""
+            docs = get_documents_data()
             
+            # Format for Dataframe
+            df_data = []
+            if docs:
+                df_data = [[d["doc_id"][:8], d["filename"], d["chunk_count"], d["indexed_at"][:19]] for d in docs]
+            
+            # Format for Dropdown
+            dropdown_choices = []
+            if docs:
+                dropdown_choices = [f"{d['filename']} ({d['doc_id']})" for d in docs]
+            
+            return df_data, gr.update(choices=dropdown_choices)
+
+        # State for tracking background jobs
+        active_jobs = gr.State([])
+
+        def upload_document(files, strategy, lang_label, current_jobs):
+            """Handle document upload via background job."""
+            if not files:
+                df_data, _ = refresh_all_docs_ui()
+                return get_text("docs_no_documents", lang_label), df_data, current_jobs
+            
+            if not isinstance(files, list):
+                files = [files]
+
             try:
-                from tutor_virtual.infrastructure.rag import get_rag_service
-                rag_service = get_rag_service()
+                job_ids = []
+                for file in files:
+                    orig_name = file.orig_name if hasattr(file, 'orig_name') else None
+                    job_id = adapter.submit_indexing_job(file.name, orig_name, strategy)
+                    job_ids.append(job_id)
                 
-                # Process and index the file
-                result = rag_service.process_and_index_file(file.name, file.orig_name if hasattr(file, 'orig_name') else None)
+                msg = get_text("docs_upload_started", lang_label).format(count=len(job_ids), strategy=strategy)
+                gr.Info(msg)
                 
-                if result["status"] == "success":
-                    status_msg = f"{get_text('docs_status_success', lang_label)} ({result['chunk_count']} chunks)"
-                else:
-                    status_msg = f"{get_text('docs_status_error', lang_label)}: {result.get('error', 'Unknown error')}"
-                
-                return status_msg, get_documents_list()
+                df_data, _ = refresh_all_docs_ui()
+                updated_jobs = current_jobs + job_ids
+                return msg, df_data, updated_jobs
                 
             except Exception as e:
-                logger.error(f"Error uploading document: {e}")
-                return f"{get_text('docs_status_error', lang_label)}: {str(e)}", get_documents_list()
+                logger.error(f"Error submitting jobs: {e}")
+                err_msg = f"Error: {str(e)}"
+                gr.Error(err_msg)
+                df_data, _ = refresh_all_docs_ui()
+                return err_msg, df_data, current_jobs
+        
+        def poll_jobs(current_jobs, lang_label):
+            """Check status of active jobs and notify user."""
+            if not current_jobs:
+                return current_jobs
+            
+            remaining_jobs = []
+            for job_id in current_jobs:
+                status_data = adapter.get_job_status(job_id)
+                status = status_data.get("status")
+                
+                if status == "completed":
+                    # Job finished successfully
+                    filename = status_data.get("result", {}).get("filename", "Document")
+                    gr.Info(get_text("docs_job_completed", lang_label).format(filename=filename))
+                    # Don't add to remaining_jobs
+                elif status == "failed":
+                    # Job failed
+                    error = status_data.get("error", "Unknown error")
+                    gr.Error(get_text("docs_job_failed", lang_label).format(error=error))
+                    # Don't add to remaining_jobs
+                else:
+                    # Still running (queued, processing)
+                    remaining_jobs.append(job_id)
+            
+            return remaining_jobs
+
+        def handle_delete(selection, lang_label):
+            """Handle document deletion."""
+            if not selection:
+                return get_text("docs_select_none", lang_label), *refresh_all_docs_ui()
+            
+            try:
+                # Extract ID from "Filename (ID)" format
+                doc_id = selection.split("(")[-1].strip(")")
+                
+                success = adapter.delete_document(doc_id)
+                
+                if success:
+                    msg = get_text("docs_delete_success", lang_label).format(doc_id=doc_id)
+                    gr.Info(msg)
+                else:
+                    msg = get_text("docs_delete_error", lang_label).format(doc_id=doc_id)
+                    gr.Error(msg)
+                
+                return msg, *refresh_all_docs_ui()
+                
+            except Exception as e:
+                logger.error(f"Error deleting document: {e}")
+                return f"Error: {str(e)}", *refresh_all_docs_ui()
+
+        # Timer to auto-refresh document list every 10 seconds
+        refresh_timer = gr.Timer(10)
+        refresh_timer.tick(
+            fn=poll_jobs,
+            inputs=[active_jobs, lang_dropdown],
+            outputs=[active_jobs]
+        ).then(
+            fn=refresh_all_docs_ui,
+            outputs=[docs_list, delete_dropdown]
+        )
         
         file_upload.change(
             fn=upload_document,
-            inputs=[file_upload, lang_dropdown],
-            outputs=[upload_status, docs_list]
+            inputs=[file_upload, strategy_radio, lang_dropdown, active_jobs],
+            outputs=[upload_status, docs_list, active_jobs]
         )
         
         refresh_docs_btn.click(
-            fn=lambda: get_documents_list(),
+            fn=refresh_all_docs_ui,
             inputs=[],
-            outputs=[docs_list]
+            outputs=[docs_list, delete_dropdown]
+        )
+        
+        delete_btn.click(
+            fn=handle_delete,
+            inputs=[delete_dropdown, lang_dropdown],
+            outputs=[upload_status, docs_list, delete_dropdown]
         )
         
         # Initialize documents list on load
-        demo.load(fn=lambda: get_documents_list(), inputs=[], outputs=[docs_list])
+        demo.load(fn=refresh_all_docs_ui, inputs=[], outputs=[docs_list, delete_dropdown])
 
     return demo, None
 

@@ -43,7 +43,9 @@ class RAGService:
         # Metadata file to track indexed documents
         self.metadata_file = self.documents_path / ".rag_metadata.json"
         
-        self.document_processor = UnstructuredDocumentProcessor()
+        # Get timeout from env
+        timeout = int(os.getenv("UNSTRUCTURED_TIMEOUT", "60"))
+        self.document_processor = UnstructuredDocumentProcessor(timeout=timeout)
         self.vector_store_manager = PineconeVectorStoreManager()
         
         # Load existing metadata
@@ -71,13 +73,14 @@ class RAGService:
         """Get list of supported file extensions."""
         return self.document_processor.get_supported_extensions()
     
-    def process_and_index_file(self, file_path: str, original_filename: Optional[str] = None) -> Dict[str, Any]:
+    def process_and_index_file(self, file_path: str, original_filename: Optional[str] = None, strategy: str = "fast") -> Dict[str, Any]:
         """
         Process a file and index it in the vector store.
         
         Args:
             file_path: Path to the file to process.
             original_filename: Original filename (useful when file was uploaded with temp name).
+            strategy: Partitioning strategy ("fast", "hi_res", "auto", "ocr_only").
             
         Returns:
             Dict with processing results including doc_id, chunk_count, etc.
@@ -85,14 +88,14 @@ class RAGService:
         path = Path(file_path)
         original_filename = original_filename or path.name
         
-        logger.info(f"Processing and indexing file: {original_filename}")
+        logger.info(f"Processing and indexing file: {original_filename} with strategy={strategy}")
         
         # Generate unique document ID
         doc_id = str(uuid4())
         
         try:
             # Process file with Unstructured
-            documents = self.document_processor.process_file(file_path)
+            documents = self.document_processor.process_file(file_path, strategy=strategy)
             
             if not documents:
                 raise ValueError("No content extracted from file")
@@ -181,8 +184,9 @@ class RAGService:
         
         for i, doc in enumerate(documents, 1):
             filename = doc.metadata.get("original_filename", "Unknown")
+            page = doc.metadata.get("page_number", "N/A")
             content = doc.page_content.strip()
-            formatted_parts.append(f"### Source {i}: {filename}\n{content}\n")
+            formatted_parts.append(f"### Source {i}: {filename} (Page {page})\n{content}\n")
         
         return "\n".join(formatted_parts)
     
@@ -193,6 +197,9 @@ class RAGService:
         Returns:
             List of document metadata dictionaries.
         """
+        # Reload metadata to ensure we have the latest updates from worker
+        self._metadata = self._load_metadata()
+        
         return [
             {
                 "doc_id": doc_id,

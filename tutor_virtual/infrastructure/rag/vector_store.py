@@ -2,6 +2,8 @@
 
 import os
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Dict, Any
 
 from langchain_core.documents import Document
@@ -97,7 +99,7 @@ class PineconeVectorStoreManager:
     
     def add_documents(self, documents: List[Document], ids: Optional[List[str]] = None) -> List[str]:
         """
-        Add documents to the vector store.
+        Add documents to the vector store using parallel batch processing.
         
         Args:
             documents: List of LangChain Document objects.
@@ -108,7 +110,42 @@ class PineconeVectorStoreManager:
         """
         self._lazy_init()
         logger.info(f"Adding {len(documents)} documents to vector store")
-        return self._vector_store.add_documents(documents=documents, ids=ids)
+        
+        batch_size = 100
+        max_workers = 5
+        max_retries = 3
+        
+        # Prepare batches
+        batches = []
+        for i in range(0, len(documents), batch_size):
+            batch_docs = documents[i:i + batch_size]
+            batch_ids = ids[i:i + batch_size] if ids else None
+            batches.append((batch_docs, batch_ids))
+            
+        all_ids = []
+        
+        def _process_batch(batch_data):
+            b_docs, b_ids = batch_data
+            for attempt in range(max_retries):
+                try:
+                    return self._vector_store.add_documents(documents=b_docs, ids=b_ids)
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise e
+                    time.sleep(2 ** attempt)  # Exponential backoff
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_batch = {executor.submit(_process_batch, batch): batch for batch in batches}
+            
+            for future in as_completed(future_to_batch):
+                try:
+                    result_ids = future.result()
+                    if result_ids:
+                        all_ids.extend(result_ids)
+                except Exception as e:
+                    logger.error(f"Batch upsert failed after retries: {e}")
+                    
+        return all_ids
     
     def similarity_search(self, query: str, k: int = 5, filter: Optional[Dict[str, Any]] = None) -> List[Document]:
         """

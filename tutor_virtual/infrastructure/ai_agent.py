@@ -43,6 +43,7 @@ Guide the student through their learning journey. Do not just give the answer; e
 - You can simulate converters using `simulate_converter_tool`.
 - You can generate quiz questions using `generate_quiz_question_tool`.
 - You can search through uploaded course documents using `rag_retrieval_tool` to find relevant information.
+- You can read datasheets from URLs using `read_datasheet_tool` to extract specific component data.
 
 **Your Modes:**
 1.  **Teacher Mode (Default):**
@@ -69,6 +70,7 @@ Guide the student through their learning journey. Do not just give the answer; e
 **Format:**
 -   Use Markdown for clarity (bolding, lists, code blocks).
 -   Use LaTeX for formulas if needed (e.g., $V_{out} = D \\cdot V_{in}$).
+-   **IMPORTANT:** If you use information retrieved from documents (via `rag_retrieval_tool`), you MUST explicitly cite the source and page number. Example: *(Source: "Chapter 1.pdf", Page 12)*.
 
 If the user asks about something unrelated to Power Electronics or the course, politely steer them back to the topic.
 """
@@ -86,7 +88,8 @@ If the user asks about something unrelated to Power Electronics or the course, p
             thermal_analysis_tool, 
             simulate_converter_tool, 
             generate_quiz_question_tool,
-            rag_retrieval_tool
+            rag_retrieval_tool,
+            read_datasheet_tool
         )
         tools = [
             design_converter_tool, 
@@ -95,7 +98,8 @@ If the user asks about something unrelated to Power Electronics or the course, p
             thermal_analysis_tool, 
             simulate_converter_tool, 
             generate_quiz_question_tool,
-            rag_retrieval_tool
+            rag_retrieval_tool,
+            read_datasheet_tool
         ]
         
         # Initialize the LLM with API key

@@ -498,3 +498,44 @@ def rag_retrieval_tool(query: str, num_results: int = 5) -> str:
         
     except Exception as e:
         return f"Error retrieving documents: {str(e)}"
+
+@tool
+def read_datasheet_tool(url: str) -> str:
+    """
+    Reads the content of a datasheet from a URL.
+    Useful for extracting specific electrical characteristics from a component's datasheet.
+    
+    Args:
+        url: The URL of the datasheet (PDF).
+    
+    Returns:
+        Extracted text content from the datasheet.
+    """
+    try:
+        import requests
+        import io
+        from pypdf import PdfReader
+        
+        # Fake user agent to avoid 403s
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        content_type = response.headers.get('Content-Type', '').lower()
+        
+        if 'pdf' in content_type or url.lower().endswith('.pdf'):
+            f = io.BytesIO(response.content)
+            reader = PdfReader(f)
+            text = ""
+            # Read first 5 pages max to avoid huge context
+            for i in range(min(5, len(reader.pages))):
+                text += reader.pages[i].extract_text() + "\n"
+            return f"Datasheet Content (First 5 pages):\n{text[:10000]}" # Limit chars
+            
+        else:
+            return "Error: Only PDF datasheets are supported for now."
+            
+    except Exception as e:
+        return f"Error reading datasheet: {str(e)}"
+

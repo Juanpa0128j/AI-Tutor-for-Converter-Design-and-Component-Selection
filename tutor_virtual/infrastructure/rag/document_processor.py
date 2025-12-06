@@ -2,6 +2,7 @@
 
 import os
 import logging
+import concurrent.futures
 from pathlib import Path
 from typing import List, Optional
 
@@ -27,14 +28,16 @@ SUPPORTED_EXTENSIONS = {
 class UnstructuredDocumentProcessor:
     """Processes documents using Unstructured API for RAG ingestion."""
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, timeout: int = 60):
         """
         Initialize the document processor.
         
         Args:
             api_key: Unstructured API key. If not provided, reads from UNSTRUCTURED_API_KEY env var.
+            timeout: Timeout in seconds for Unstructured API calls.
         """
         self.api_key = api_key or os.getenv("UNSTRUCTURED_API_KEY")
+        self.timeout = timeout
         if not self.api_key:
             logger.warning("UNSTRUCTURED_API_KEY not set. Document processing will fail.")
     
@@ -47,7 +50,7 @@ class UnstructuredDocumentProcessor:
         """Return list of supported file extensions."""
         return sorted(list(SUPPORTED_EXTENSIONS))
     
-    def process_file(self, file_path: str) -> List[Document]:
+    def process_file(self, file_path: str, strategy: str = "fast") -> List[Document]:
         """
         Process a file using Unstructured API and return LangChain documents.
         
@@ -56,6 +59,7 @@ class UnstructuredDocumentProcessor:
         
         Args:
             file_path: Path to the file to process.
+            strategy: Partitioning strategy ("fast", "hi_res", "auto", "ocr_only").
             
         Returns:
             List of LangChain Document objects with chunked content.
@@ -97,13 +101,24 @@ class UnstructuredDocumentProcessor:
                         content=file_content,
                         file_name=filename,
                     ),
-                    strategy="auto",
-                    chunking_strategy="basic",
+                    strategy=strategy,
+                    chunking_strategy="by_title",
                     max_characters=1000,
+                    overlap=100,
+                    split_pdf_page=True,
+                    split_pdf_concurrency_level=15,
+                    split_pdf_allow_failed=True,
                 ),
             )
             
-            res = client.general.partition(request=req)
+            # Execute with timeout
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(client.general.partition, request=req)
+                try:
+                    res = future.result(timeout=self.timeout)
+                except concurrent.futures.TimeoutError:
+                    logger.error(f"Unstructured API request timed out after {self.timeout} seconds")
+                    raise TimeoutError(f"Document processing timed out after {self.timeout} seconds")
             
             if res.elements is None:
                 logger.warning(f"No elements returned from Unstructured API for {file_path}")
