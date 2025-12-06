@@ -14,6 +14,7 @@ from tutor_virtual.domain.components.selector import ComponentSelector
 from tutor_virtual.infrastructure.catalogs.mouser import MouserAdapter
 from tutor_virtual.shared.dto import ConverterSpec, DesignContext, DesignRequest, DesignSessionResult
 from .spec_schema import FieldDefinition, TopologyForm, available_forms, FORMS
+from .translations import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +38,24 @@ OUTPUT_UNITS = {
 
 COMPONENT_COLUMNS = ["Tipo", "Fabricante", "Número de Parte", "Descripción", "Precio (USD)", "Stock", "Score", "Datasheet", "Link"]
 
-def _create_empty_df(message: str = "") -> pd.DataFrame:
+def _create_empty_df(message: str = "", lang_label: str = "Español") -> pd.DataFrame:
     """Creates an empty DataFrame with the correct columns, optionally with a message."""
-    df = pd.DataFrame(columns=COMPONENT_COLUMNS)
+    cols = [
+        get_text("col_type", lang_label),
+        get_text("col_mfr", lang_label),
+        get_text("col_part", lang_label),
+        get_text("col_desc", lang_label),
+        get_text("col_price", lang_label),
+        get_text("col_stock", lang_label),
+        get_text("col_score", lang_label),
+        get_text("col_datasheet", lang_label),
+        get_text("col_link", lang_label)
+    ]
+    df = pd.DataFrame(columns=cols)
     if message:
         # Add a row with the message in the Description column
-        row = {col: "" for col in COMPONENT_COLUMNS}
-        row["Descripción"] = message
+        row = {col: "" for col in cols}
+        row[get_text("col_desc", lang_label)] = message
         df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     return df
 
@@ -84,6 +96,15 @@ class GradioAdapter:
 
         self.mouser_adapter = None
         self.component_service = None
+        self.task_queue = None
+        
+        try:
+            from tutor_virtual.infrastructure.task_queue import RedisTaskQueue
+            self.task_queue = RedisTaskQueue()
+            logger.info("Redis Task Queue initialized")
+        except Exception as e:
+            logger.warning(f"Redis Task Queue not available: {e}")
+
         try:
             self.mouser_adapter = MouserAdapter()
             self.component_service = ComponentRecommendationService(
@@ -93,6 +114,49 @@ class GradioAdapter:
             logger.info("Mouser adapter initialized successfully")
         except Exception as e:
             logger.error(f"Mouser API not available: {e}")
+
+    def submit_indexing_job(self, file_path: str, original_filename: str, strategy: str = "fast") -> str:
+        """Submit a document indexing job to the background queue."""
+        if not self.task_queue:
+            raise RuntimeError("Task queue is not available (Redis not configured?)")
+            
+        import shutil
+        import os
+        from pathlib import Path
+        
+        # Create staging directory
+        staging_dir = Path("data/uploads/staging")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy file to staging area so worker can access it
+        staging_path = staging_dir / f"{os.path.basename(file_path)}"
+        shutil.copy2(file_path, staging_path)
+        
+        job_id = self.task_queue.enqueue_job(
+            "index_document",
+            {
+                "file_path": str(staging_path.absolute()),
+                "original_filename": original_filename,
+                "strategy": strategy
+            }
+        )
+        return job_id
+
+    def get_job_status(self, job_id: str) -> Dict[str, Any]:
+        """Get status of a background job."""
+        if not self.task_queue:
+            return {"status": "unknown"}
+        return self.task_queue.get_job_status(job_id)
+
+    def delete_document(self, doc_id: str) -> bool:
+        """Delete a document via the RAG service."""
+        from tutor_virtual.infrastructure.rag import get_rag_service
+        try:
+            service = get_rag_service()
+            return service.delete_document(doc_id)
+        except Exception as e:
+            logger.error(f"Error deleting document via adapter: {e}")
+            return False
 
     def get_available_topologies(self) -> List[Tuple[str, str]]:
         """Returns list of (Display Name, ID) for Dropdown."""
@@ -143,7 +207,6 @@ class GradioAdapter:
                         defaults[field.key] = float(val_to_parse)
                     except ValueError:
                         pass
-            print(f"DEBUG: Defaults for {topology_id_str}: {defaults}")
             return defaults
         except ValueError:
             return {}
@@ -152,16 +215,18 @@ class GradioAdapter:
         self, 
         topology_id_str: str, 
         inputs: Dict[str, float], 
-        weights: Dict[str, float]
-    ) -> Tuple[str, pd.DataFrame]:
+        weights: Dict[str, float],
+        lang_label: str = "Español"
+    ) -> Tuple[str, pd.DataFrame, Optional[Dict[str, Any]]]:
         """
         Executes the design workflow and component search.
         Returns:
             - Markdown report string
             - Pandas DataFrame with component recommendations
+            - Dictionary with raw design result for context
         """
         if not topology_id_str:
-            return "⚠️ Por favor seleccione una topología.", _create_empty_df()
+            return get_text("msg_select_topo", lang_label), _create_empty_df(get_text("msg_select_topo", lang_label)), None
 
         try:
             topology_id = TopologyId(topology_id_str)
@@ -190,32 +255,46 @@ class GradioAdapter:
             result = self.workflow.run_predesign(DesignRequest(context=context, spec=spec))
             
             # Generate Report
-            report = self._generate_markdown_report(result)
+            report = self._generate_markdown_report(result, lang_label)
             
             # Search Components
-            components_df = await self._search_components_df(result, weights)
+            components_df, components_list = await self._search_components_df(result, weights, lang_label)
             
-            return report, components_df
+            # Convert result to dict for context
+            # We use a custom serialization or just extract what we need to avoid issues with Enums/complex types
+            # For now, let's try to construct a safe dict
+            result_context = {
+                "topology": result.spec.topology_id,
+                "inputs": result.spec.operating_conditions,
+                "calculated_values": result.predesign.primary_values,
+                "losses": result.losses.totals if result.losses else {},
+                "recommendation": result.recommendation.summary if result.recommendation else "",
+                "components": components_list
+            }
+            
+            return report, components_df, result_context
 
         except ValidationFailedError as exc:
             issues = "\n".join(f"- {issue.message}" for issue in exc.issues)
-            return f"### ⛔ Error de Validación\n\n{issues}", _create_empty_df()
+            title = get_text("report_error_validation", lang_label)
+            return f"### ⛔ {title}\n\n{issues}", _create_empty_df(title), None
         except Exception as exc:
             logger.exception("Error running design")
-            return f"### ❌ Error del Sistema\n\n{str(exc)}", _create_empty_df()
+            title = get_text("report_error_system", lang_label)
+            return f"### ❌ {title}\n\n{str(exc)}", _create_empty_df(title), None
 
-    def _generate_markdown_report(self, result: DesignSessionResult) -> str:
-        lines = ["# 📊 Resultado del Prediseño"]
+    def _generate_markdown_report(self, result: DesignSessionResult, lang_label: str) -> str:
+        lines = [f"# 📊 {get_text('report_title', lang_label)}"]
         
         if result.predesign.primary_values:
-            lines.append("## ⚡ Parámetros Principales")
+            lines.append(f"## ⚡ {get_text('report_params', lang_label)}")
             for key, value in result.predesign.primary_values.items():
                 formatted = _format_value_with_unit(key, value)
                 name = key.replace("_", " ").title()
                 lines.append(f"- **{name}:** {formatted}")
         
         if result.losses.totals and any(result.losses.totals.values()):
-            lines.append("\n## 🔥 Pérdidas Estimadas")
+            lines.append(f"\n## 🔥 {get_text('report_losses', lang_label)}")
             total_losses = 0
             for key, value in result.losses.totals.items():
                 formatted = _format_value_with_unit(key, value)
@@ -224,25 +303,26 @@ class GradioAdapter:
                 if "loss" in key.lower():
                     total_losses += value
             if total_losses > 0:
-                lines.append(f"- **Pérdidas Totales:** {_format_value_with_unit('total_loss', total_losses)}")
+                lines.append(f"- **{get_text('report_total_losses', lang_label)}:** {_format_value_with_unit('total_loss', total_losses)}")
 
         if result.issues:
-            lines.append("\n## ⚠️ Advertencias")
+            lines.append(f"\n## ⚠️ {get_text('report_warnings', lang_label)}")
             for issue in result.issues:
                 icon = "🔴" if issue.severity.value == "error" else "🟡"
                 lines.append(f"- {icon} **{issue.severity.value.upper()}:** {issue.message}")
         
         return "\n".join(lines)
 
-    async def _search_components_df(self, result: DesignSessionResult, weights_dict: Dict[str, float]) -> pd.DataFrame:
+    async def _search_components_df(self, result: DesignSessionResult, weights_dict: Dict[str, float], lang_label: str) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:
         if not self.component_service:
-            return _create_empty_df("Servicio de componentes no disponible")
+            return _create_empty_df(get_text("comp_service_unavailable", lang_label), lang_label), []
 
         requirements_list = self._extract_component_requirements(result)
         if not requirements_list:
-            return _create_empty_df("No se detectaron componentes necesarios")
+            return _create_empty_df(get_text("comp_no_requirements", lang_label), lang_label), []
 
         all_components = []
+        raw_components_data = []
         prioritization = PrioritizationWeights(**weights_dict)
         selector = ComponentSelector(weights=prioritization)
 
@@ -259,31 +339,42 @@ class GradioAdapter:
                         c = s.component
                         # Format links as HTML for Gradio Dataframe
                         datasheet_link = f'<a href="{c.datasheet_url}" target="_blank">PDF</a>' if c.datasheet_url else "-"
-                        product_link = f'<a href="{c.product_url}" target="_blank">Ver</a>' if c.product_url else "-"
+                        view_text = get_text("link_view", lang_label)
+                        product_link = f'<a href="{c.product_url}" target="_blank">{view_text}</a>' if c.product_url else "-"
                         
                         all_components.append({
-                            "Tipo": req.component_type.value,
-                            "Fabricante": c.manufacturer,
-                            "Número de Parte": c.part_number,
-                            "Descripción": c.description,
-                            "Precio (USD)": c.price_usd,
-                            "Stock": c.availability,
-                            "Score": f"{s.total_score:.2f}",
-                            "Datasheet": datasheet_link,
-                            "Link": product_link
+                            get_text("col_type", lang_label): req.component_type.value,
+                            get_text("col_mfr", lang_label): c.manufacturer,
+                            get_text("col_part", lang_label): c.part_number,
+                            get_text("col_desc", lang_label): c.description,
+                            get_text("col_price", lang_label): c.price_usd,
+                            get_text("col_stock", lang_label): c.availability,
+                            get_text("col_score", lang_label): round(s.total_score, 2),
+                            get_text("col_datasheet", lang_label): datasheet_link,
+                            get_text("col_link", lang_label): product_link
                         })
+                        
+                        # Add raw data for agent
+                        # Convert dataclass to dict, excluding private fields
+                        comp_dict = asdict(c)
+                        raw_components_data.append({
+                            "type": req.component_type.value,
+                            "manufacturer": c.manufacturer,
+                            "part_number": c.part_number,
+                            "description": c.description,
+                            "datasheet_url": c.datasheet_url,
+                            "attributes": {k: v for k, v in comp_dict.items() if k not in ['part_number', 'manufacturer', 'description', 'datasheet_url', 'product_url', 'catalog', 'price_usd', 'availability']}
+                        })
+
             except Exception as e:
                 logger.error(f"Error searching components for {req.component_type}: {e}")
 
         if not all_components:
-            return _create_empty_df("No se encontraron componentes")
+            return _create_empty_df(get_text("comp_no_requirements", lang_label), lang_label), []
 
         df = pd.DataFrame(all_components)
-        # Ensure columns are in the correct order
-        df = df[COMPONENT_COLUMNS]
-        # Fill NaN values to avoid JSON serialization errors
         df = df.fillna("")
-        return df
+        return df, raw_components_data
 
     def _extract_component_requirements(self, result: DesignSessionResult) -> List[ComponentRequirements]:
         # Logic copied and adapted from app.py

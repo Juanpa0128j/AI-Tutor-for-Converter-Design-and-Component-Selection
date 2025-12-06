@@ -11,5 +11,5 @@ if __name__ == "__main__":
     else:
         from tutor_virtual.presentation.gradio_app import create_app
         print("🚀 Iniciando interfaz web en http://localhost:7860")
-        app = create_app()
+        app, _ = create_app()
         app.launch(server_name="0.0.0.0", server_port=7860, share=False)

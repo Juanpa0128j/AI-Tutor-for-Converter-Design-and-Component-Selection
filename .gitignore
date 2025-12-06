@@ -6,6 +6,12 @@
 *.csv
 *.txt
 
+# Omit egg-info
+*.egg-info
+
+# Omit logs
+*.log
+
 # Omit compiled Python files
 __pycache__/
 
@@ -15,5 +21,7 @@ __pycache__/
 # Omit environment files
 .env
 
-# Omit examples
+# Omit examples, tests and debug files
+debug*
 /examples/
+/tests/

@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
 from pathlib import Path
+import os
 
 from textual import events
 from textual.app import App, ComposeResult
@@ -27,15 +28,19 @@ from tutor_virtual.shared.dto import ConverterSpec, DesignContext, DesignRequest
 from .spec_schema import FieldDefinition, TopologyForm, available_forms
 
 
-# Configure logging to file
-log_file = Path(__file__).parent.parent.parent / "component_search.log"
+# Configure logging - production uses INFO, DEBUG available via env var
+log_level = logging.DEBUG if os.getenv("DEBUG") else logging.INFO
+
+# Build handlers - file logging is optional via LOG_TO_FILE env var
+handlers = [logging.StreamHandler()]
+if os.getenv("LOG_TO_FILE"):
+    log_file = Path(__file__).parent.parent.parent / "component_search.log"
+    handlers.append(logging.FileHandler(log_file, mode='w'))
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, mode='w'),  # Overwrite on each run
-        logging.StreamHandler()  # Also to console for debugging
-    ]
+    handlers=handlers
 )
 
 # Silence noisy third-party loggers
@@ -331,7 +336,6 @@ class DesignWizardApp(App[None]):
             logger.info("✅ Mouser adapter initialized successfully")
         except Exception as e:
             logger.error(f"⚠️  Mouser API not available: {e}", exc_info=True)
-            print(f"⚠️  Mouser API not available: {e}")
         
         # Default prioritization weights
         self._current_weights = PrioritizationWeights(
@@ -624,10 +628,10 @@ class DesignWizardApp(App[None]):
         primary = result.predesign.primary_values
         topology = TopologyId(result.spec.topology_id)
         
-        logger.info(f"\n🔧 Extrayendo requerimientos para topología: {topology.value}")
-        logger.info(f"📊 Valores primarios del prediseño:")
+        logger.debug(f"\n🔧 Extracting requirements for topology: {topology.value}")
+        logger.debug(f"📊 Primary values from pre-design:")
         for key, value in primary.items():
-            logger.info(f"   {key}: {value}")
+            logger.debug(f"   {key}: {value}")
         
         # Map topology to required component types
         topology_components = {
@@ -644,7 +648,7 @@ class DesignWizardApp(App[None]):
         }
         
         component_types = topology_components.get(topology, [])
-        logger.info(f"\n🎯 Componentes requeridos: {[ct.value for ct in component_types]}")
+        logger.debug(f"\n🎯 Required components: {[ct.value for ct in component_types]}")
         
         # Extract voltage and current from operating conditions (input) and results
         operating = result.spec.operating_conditions
@@ -679,11 +683,11 @@ class DesignWizardApp(App[None]):
         inductance = primary.get("inductance") or primary.get("l_min")
         capacitance = primary.get("capacitance") or primary.get("c_min") or primary.get("required_capacitance")
         
-        logger.info(f"\n⚡ Valores extraídos:")
-        logger.info(f"   Voltaje: {voltage_original}V → {voltage_max}V (con margen 1.5x)")
-        logger.info(f"   Corriente: {current_original}A → {current_max}A (con margen 1.2x)")
-        logger.info(f"   Inductancia: {inductance*1e6 if inductance else 0:.2f}µH")
-        logger.info(f"   Capacitancia: {capacitance*1e6 if capacitance else 0:.2f}µF")
+        logger.debug(f"\n⚡ Extracted values:")
+        logger.debug(f"   Voltage: {voltage_original}V → {voltage_max}V (with 1.5x margin)")
+        logger.debug(f"   Current: {current_original}A → {current_max}A (with 1.2x margin)")
+        logger.debug(f"   Inductance: {inductance*1e6 if inductance else 0:.2f}µH")
+        logger.debug(f"   Capacitance: {capacitance*1e6 if capacitance else 0:.2f}µF")
         
         # Create requirements for each component type
         for comp_type in component_types:
@@ -695,7 +699,7 @@ class DesignWizardApp(App[None]):
                 capacitance_min=capacitance if comp_type == ComponentType.CAPACITOR and capacitance else None,
             )
             requirements_list.append(req)
-            logger.info(f"   ✓ Creado requerimiento para {comp_type.value}")
+            logger.debug(f"   ✓ Created requirement for {comp_type.value}")
         
         return requirements_list
     
